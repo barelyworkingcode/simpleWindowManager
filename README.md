@@ -10,6 +10,7 @@ A lightweight macOS command-line window manager for multi-display setups. Design
 - **Push to secondary** — Moves the foremost window on the primary display to the secondary, then raises the next window on primary.
 - **Pull to primary** — Moves the foremost window on the secondary display to the primary and raises it.
 - **Toggle fill/center** — Toggles the foremost window between filling the screen and a centered layout (60% width, 75% height).
+- **Hotkey cheat sheet** — Shows a floating overlay listing all Karabiner Hyper key shortcuts. Dismisses on any keypress.
 
 ## Requirements
 
@@ -42,6 +43,7 @@ SUBCOMMANDS:
   push                Push the foremost window on the primary display to the secondary display
   pull                Pull the foremost window on the secondary display to the primary display
   toggle              Toggle the foremost window between filling the screen and a centered size
+  keys                Show a floating overlay of all Karabiner Hyper key shortcuts
 ```
 
 ### Examples
@@ -64,6 +66,9 @@ swm pull
 
 # Toggle foremost window between fill and centered
 swm toggle
+
+# Show hotkey cheat sheet (press any key to dismiss)
+swm keys
 ```
 
 ## Karabiner-Elements Integration
@@ -175,6 +180,19 @@ Then add rules for each swm command. These go inside the `"rules"` array in your
         "modifiers": { "mandatory": ["command", "control", "option", "shift"] }
       },
       "to": [{ "shell_command": "~/bin/swm toggle" }]
+    }
+  ]
+},
+{
+  "description": "Hyper+/: Show hotkey cheat sheet",
+  "manipulators": [
+    {
+      "type": "basic",
+      "from": {
+        "key_code": "slash",
+        "modifiers": { "mandatory": ["command", "control", "option", "shift"] }
+      },
+      "to": [{ "shell_command": "~/bin/swm keys &" }]
     }
   ]
 }

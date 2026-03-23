@@ -7,7 +7,7 @@ struct SWM: ParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "swm",
         abstract: "Simple window manager for multi-display setups.",
-        subcommands: [CyclePrimary.self, CycleSecondary.self, SwapForemost.self, PushToSecondary.self, PullToPrimary.self, ToggleFillCenter.self]
+        subcommands: [CyclePrimary.self, CycleSecondary.self, SwapForemost.self, PushToSecondary.self, PullToPrimary.self, ToggleFillCenter.self, ShowKeys.self]
     )
 }
 
@@ -68,6 +68,19 @@ struct ToggleFillCenter: ParsableCommand {
     func run() throws {
         try ensureAccessibility()
         try toggleFillCenter()
+    }
+}
+
+struct ShowKeys: ParsableCommand {
+    static let configuration = CommandConfiguration(
+        commandName: "keys",
+        abstract: "Show a floating overlay of all Karabiner Hyper key shortcuts."
+    )
+
+    func run() throws {
+        MainActor.assumeIsolated {
+            showKeysOverlay()
+        }
     }
 }
 
@@ -543,4 +556,167 @@ func swapForemost(primary: NSScreen, secondary: NSScreen) throws {
     raiseWindow(axPrimary, pid: primaryWin.ownerPID)
 
     print("Swapped '\(primaryWin.ownerName)' (→ secondary) and '\(secondaryWin.ownerName)' (→ primary).")
+}
+
+// MARK: - Keys overlay
+
+func parseKarabinerDescriptions() -> [String] {
+    let path = (NSString("~/.config/karabiner/karabiner.json").expandingTildeInPath)
+    guard let data = FileManager.default.contents(atPath: path),
+          let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+          let profiles = json["profiles"] as? [[String: Any]] else {
+        return []
+    }
+
+    // Use the selected profile, or fall back to the first
+    let profile = profiles.first(where: { $0["selected"] as? Bool == true }) ?? profiles.first
+    guard let rules = (profile?["complex_modifications"] as? [String: Any])?["rules"] as? [[String: Any]] else {
+        return []
+    }
+
+    var descriptions: [String] = []
+    for rule in rules {
+        if let desc = rule["description"] as? String, desc.contains("Hyper+") {
+            descriptions.append(desc)
+        }
+    }
+    return descriptions
+}
+
+class KeysOverlayDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
+    let descriptions: [String]
+    var panel: NSPanel?
+    var monitor: Any?
+
+    init(descriptions: [String]) {
+        self.descriptions = descriptions
+    }
+
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        let screen = NSScreen.main ?? NSScreen.screens[0]
+
+        // Build the text content
+        let title = "Hyper Key Shortcuts"
+        let separator = String(repeating: "─", count: 40)
+        var lines: [String] = [title, separator]
+        for desc in descriptions {
+            // Descriptions are like "Hyper+Q: Rotate apps on primary display"
+            // Split on first ": " to format as columns
+            if let colonRange = desc.range(of: ": ") {
+                let key = String(desc[desc.startIndex..<colonRange.lowerBound])
+                let action = String(desc[colonRange.upperBound...])
+                let padded = key.padding(toLength: 16, withPad: " ", startingAt: 0)
+                lines.append("\(padded) \(action)")
+            } else {
+                lines.append(desc)
+            }
+        }
+        lines.append("")
+        lines.append("Press any key to dismiss")
+
+        let text = lines.joined(separator: "\n")
+
+        // Create attributed string
+        let font = NSFont.monospacedSystemFont(ofSize: 16, weight: .regular)
+        let titleFont = NSFont.monospacedSystemFont(ofSize: 20, weight: .bold)
+        let paraStyle = NSMutableParagraphStyle()
+        paraStyle.lineSpacing = 4
+
+        let attrString = NSMutableAttributedString(string: text, attributes: [
+            .font: font,
+            .foregroundColor: NSColor.white,
+            .paragraphStyle: paraStyle
+        ])
+        // Style the title
+        let titleRange = (text as NSString).range(of: title)
+        attrString.addAttribute(.font, value: titleFont, range: titleRange)
+        // Style the dismiss hint
+        let hintRange = (text as NSString).range(of: "Press any key to dismiss")
+        attrString.addAttribute(.foregroundColor, value: NSColor.lightGray, range: hintRange)
+
+        // Measure text size — use a huge width so nothing wraps, then size the panel to fit
+        let noWrapSize = CGSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
+        let textRect = attrString.boundingRect(with: noWrapSize, options: [.usesLineFragmentOrigin, .usesFontLeading])
+
+        let padding: CGFloat = 40
+        let panelWidth = ceil(textRect.width) + padding * 2
+        let panelHeight = ceil(textRect.height) + padding * 2
+
+        // Center on screen
+        let panelX = screen.frame.origin.x + (screen.frame.width - panelWidth) / 2
+        let panelY = screen.frame.origin.y + (screen.frame.height - panelHeight) / 2
+        let panelFrame = NSRect(x: panelX, y: panelY, width: panelWidth, height: panelHeight)
+
+        let panel = NSPanel(
+            contentRect: panelFrame,
+            styleMask: [.borderless, .nonactivatingPanel],
+            backing: .buffered,
+            defer: false
+        )
+        panel.level = .floating
+        panel.isOpaque = false
+        panel.backgroundColor = NSColor(white: 0.1, alpha: 0.92)
+        panel.hasShadow = true
+
+        // Round corners
+        panel.contentView?.wantsLayer = true
+        panel.contentView?.layer?.cornerRadius = 16
+        panel.contentView?.layer?.masksToBounds = true
+
+        // Add text view
+        let textView = NSTextView(frame: NSRect(x: padding, y: padding,
+                                                 width: panelWidth - padding * 2,
+                                                 height: panelHeight - padding * 2))
+        textView.isEditable = false
+        textView.isSelectable = false
+        textView.drawsBackground = false
+        textView.textContainer?.lineBreakMode = .byClipping
+        textView.textContainer?.widthTracksTextView = false
+        textView.textContainer?.size = CGSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
+        textView.isHorizontallyResizable = false
+        textView.textStorage?.setAttributedString(attrString)
+
+        panel.contentView?.addSubview(textView)
+        panel.orderFrontRegardless()
+        self.panel = panel
+
+        // Monitor for any key press to dismiss
+        monitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown]) { [weak self] event in
+            self?.dismiss()
+            return nil
+        }
+
+        // Also dismiss on mouse click
+        NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] event in
+            self?.dismiss()
+            return nil
+        }
+
+        // Activate so we can receive key events
+        NSApp.activate(ignoringOtherApps: true)
+        panel.makeKey()
+    }
+
+    @MainActor func dismiss() {
+        if let monitor = monitor {
+            NSEvent.removeMonitor(monitor)
+        }
+        panel?.close()
+        NSApp.terminate(nil)
+    }
+}
+
+@MainActor func showKeysOverlay() {
+    let descriptions = parseKarabinerDescriptions()
+    if descriptions.isEmpty {
+        print("No Hyper key shortcuts found in Karabiner config.")
+        return
+    }
+
+    let app = NSApplication.shared
+    app.setActivationPolicy(.accessory)
+
+    let delegate = KeysOverlayDelegate(descriptions: descriptions)
+    app.delegate = delegate
+    app.run()
 }
