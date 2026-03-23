@@ -11,6 +11,7 @@ A lightweight macOS command-line window manager for multi-display setups. Design
 - **Pull to primary** — Moves the foremost window on the secondary display to the primary and raises it.
 - **Toggle fill/center** — Toggles the foremost window between filling the screen and a centered layout (60% width, 75% height).
 - **Hotkey cheat sheet** — Shows a floating overlay listing all Karabiner Hyper key shortcuts. Dismisses on any keypress.
+- **Microphone mute toggle** — Toggles the default input device (microphone) mute state.
 
 ## Requirements
 
@@ -44,6 +45,7 @@ SUBCOMMANDS:
   pull                Pull the foremost window on the secondary display to the primary display
   toggle              Toggle the foremost window between filling the screen and a centered size
   keys                Show a floating overlay of all Karabiner Hyper key shortcuts
+  mute                Toggle the default microphone mute state
 ```
 
 ### Examples
@@ -69,6 +71,9 @@ swm toggle
 
 # Show hotkey cheat sheet (press any key to dismiss)
 swm keys
+
+# Toggle microphone mute
+swm mute
 ```
 
 ## Karabiner-Elements Integration
@@ -193,6 +198,19 @@ Then add rules for each swm command. These go inside the `"rules"` array in your
         "modifiers": { "mandatory": ["command", "control", "option", "shift"] }
       },
       "to": [{ "shell_command": "~/bin/swm keys &" }]
+    }
+  ]
+},
+{
+  "description": "Hyper+F5: Toggle microphone mute",
+  "manipulators": [
+    {
+      "type": "basic",
+      "from": {
+        "key_code": "f5",
+        "modifiers": { "mandatory": ["command", "control", "option", "shift"] }
+      },
+      "to": [{ "shell_command": "~/bin/swm mute &" }]
     }
   ]
 }

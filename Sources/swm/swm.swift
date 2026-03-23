@@ -1,5 +1,6 @@
 import ArgumentParser
 import AppKit
+import CoreAudio
 import CoreGraphics
 
 @main
@@ -7,7 +8,7 @@ struct SWM: ParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "swm",
         abstract: "Simple window manager for multi-display setups.",
-        subcommands: [CyclePrimary.self, CycleSecondary.self, SwapForemost.self, PushToSecondary.self, PullToPrimary.self, ToggleFillCenter.self, ShowKeys.self]
+        subcommands: [CyclePrimary.self, CycleSecondary.self, SwapForemost.self, PushToSecondary.self, PullToPrimary.self, ToggleFillCenter.self, ShowKeys.self, MuteMicrophone.self]
     )
 }
 
@@ -68,6 +69,17 @@ struct ToggleFillCenter: ParsableCommand {
     func run() throws {
         try ensureAccessibility()
         try toggleFillCenter()
+    }
+}
+
+struct MuteMicrophone: ParsableCommand {
+    static let configuration = CommandConfiguration(
+        commandName: "mute",
+        abstract: "Toggle the default microphone mute state."
+    )
+
+    func run() throws {
+        try toggleMicMute()
     }
 }
 
@@ -719,4 +731,50 @@ class KeysOverlayDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable 
     let delegate = KeysOverlayDelegate(descriptions: descriptions)
     app.delegate = delegate
     app.run()
+}
+
+// MARK: - Microphone mute toggle
+
+func toggleMicMute() throws {
+    // Get the default input device
+    var deviceID = AudioDeviceID(0)
+    var propertySize = UInt32(MemoryLayout<AudioDeviceID>.size)
+    var address = AudioObjectPropertyAddress(
+        mSelector: kAudioHardwarePropertyDefaultInputDevice,
+        mScope: kAudioObjectPropertyScopeGlobal,
+        mElement: kAudioObjectPropertyElementMain
+    )
+
+    var status = AudioObjectGetPropertyData(
+        AudioObjectID(kAudioObjectSystemObject), &address, 0, nil, &propertySize, &deviceID
+    )
+    guard status == noErr, deviceID != kAudioDeviceUnknown else {
+        print("No default input device found.")
+        throw ExitCode.failure
+    }
+
+    // Read the current mute state
+    var muteAddress = AudioObjectPropertyAddress(
+        mSelector: kAudioDevicePropertyMute,
+        mScope: kAudioDevicePropertyScopeInput,
+        mElement: kAudioObjectPropertyElementMain
+    )
+
+    var muteSize = UInt32(MemoryLayout<UInt32>.size)
+    var isMuted: UInt32 = 0
+    status = AudioObjectGetPropertyData(deviceID, &muteAddress, 0, nil, &muteSize, &isMuted)
+    guard status == noErr else {
+        print("Could not read microphone mute state (error \(status)).")
+        throw ExitCode.failure
+    }
+
+    // Toggle
+    var newMute: UInt32 = isMuted == 0 ? 1 : 0
+    status = AudioObjectSetPropertyData(deviceID, &muteAddress, 0, nil, muteSize, &newMute)
+    guard status == noErr else {
+        print("Could not set microphone mute state (error \(status)).")
+        throw ExitCode.failure
+    }
+
+    print(newMute == 1 ? "Microphone muted." : "Microphone unmuted.")
 }
