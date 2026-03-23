@@ -22,8 +22,13 @@ struct CyclePrimary: ParsableCommand {
 
     func run() throws {
         try ensureAccessibility()
-        let screen = primaryScreen()
-        try cycleWindows(on: screen)
+        if NSScreen.screens.count == 1 && isStageManagerEnabled() {
+            try cycleStages()
+        } else if NSScreen.screens.count == 1 {
+            try cycleWindows(on: nil)
+        } else {
+            try cycleWindows(on: primaryScreen())
+        }
     }
 }
 
@@ -141,6 +146,26 @@ func ensureAccessibility() throws {
         print("Accessibility permission required. A system prompt should appear.")
         print("Grant permission in System Settings > Privacy & Security > Accessibility, then retry.")
         throw ExitCode.failure
+    }
+}
+
+// MARK: - Stage Manager detection
+
+func isStageManagerEnabled() -> Bool {
+    let task = Process()
+    task.executableURL = URL(fileURLWithPath: "/usr/bin/defaults")
+    task.arguments = ["read", "com.apple.WindowManager", "GloballyEnabled"]
+    let pipe = Pipe()
+    task.standardOutput = pipe
+    task.standardError = Pipe()
+    do {
+        try task.run()
+        task.waitUntilExit()
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        let output = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines)
+        return output == "1"
+    } catch {
+        return false
     }
 }
 
@@ -399,9 +424,14 @@ func moveWindow(_ axWindow: AXUIElement, from src: CGRect, to dst: CGRect, windo
 
 // MARK: - Cycle windows
 
-func cycleWindows(on screen: NSScreen) throws {
+func cycleWindows(on screen: NSScreen?) throws {
     let allWindows = getVisibleWindows()
-    let onScreen = windowsOnScreen(screen, from: allWindows)
+    let onScreen: [WindowInfo]
+    if let screen = screen {
+        onScreen = windowsOnScreen(screen, from: allWindows)
+    } else {
+        onScreen = allWindows
+    }
 
     guard onScreen.count > 1 else {
         if onScreen.isEmpty {
@@ -422,7 +452,69 @@ func cycleWindows(on screen: NSScreen) throws {
     }
 
     raiseWindow(axWindow, pid: bottomWindow.ownerPID)
-    print("Raised '\(bottomWindow.ownerName)' to the top on \(screen == primaryScreen() ? "primary" : "secondary") display.")
+    let displayLabel: String
+    if let screen = screen {
+        displayLabel = screen == primaryScreen() ? "primary" : "secondary"
+    } else {
+        displayLabel = "single"
+    }
+    print("Raised '\(bottomWindow.ownerName)' to the top on \(displayLabel) display.")
+}
+
+/// Cycle through Stage Manager stages using round-robin.
+/// Enumerates all regular apps with real windows, sorts them deterministically,
+/// finds the currently active app, and raises the next one in the list.
+func cycleStages() throws {
+    // Find all regular apps that have at least one real window
+    let allApps = NSWorkspace.shared.runningApplications
+        .filter { $0.activationPolicy == .regular && !$0.isTerminated }
+
+    var appsWithWindows: [(pid: pid_t, name: String)] = []
+    for app in allApps {
+        let appElement = AXUIElementCreateApplication(app.processIdentifier)
+        var windowsRef: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(appElement, kAXWindowsAttribute as CFString, &windowsRef) == .success,
+              let axWindows = windowsRef as? [AXUIElement],
+              !axWindows.isEmpty else { continue }
+
+        let hasRealWindow = axWindows.contains { axWin in
+            guard let size = getWindowSize(axWin) else { return false }
+            return size.width >= 200 && size.height >= 200
+        }
+        guard hasRealWindow else { continue }
+
+        appsWithWindows.append((pid: app.processIdentifier, name: app.localizedName ?? "unknown"))
+    }
+
+    // Sort by name for deterministic cycling order
+    appsWithWindows.sort { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+
+    guard appsWithWindows.count > 1 else {
+        if appsWithWindows.isEmpty {
+            print("No windows found on this display.")
+        } else {
+            print("Only one window/stage on this display, nothing to cycle.")
+        }
+        return
+    }
+
+    // Find the currently active app and pick the next one
+    let frontPID = NSWorkspace.shared.frontmostApplication?.processIdentifier ?? 0
+    let currentIdx = appsWithWindows.firstIndex(where: { $0.pid == frontPID }) ?? 0
+    let nextIdx = (currentIdx + 1) % appsWithWindows.count
+    let target = appsWithWindows[nextIdx]
+
+    // Raise the app's main window to bring its stage forward
+    let appElement = AXUIElementCreateApplication(target.pid)
+    var windowsRef: CFTypeRef?
+    AXUIElementCopyAttributeValue(appElement, kAXWindowsAttribute as CFString, &windowsRef)
+    guard let axWindows = windowsRef as? [AXUIElement], let mainWindow = axWindows.first else {
+        print("Could not get window for '\(target.name)'.")
+        throw ExitCode.failure
+    }
+
+    raiseWindow(mainWindow, pid: target.pid)
+    print("Raised '\(target.name)' to the top on stage display.")
 }
 
 // MARK: - Toggle fill / center
