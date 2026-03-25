@@ -174,6 +174,24 @@ func isStageManagerEnabled() -> Bool {
     }
 }
 
+func isDockOnLeft() -> Bool {
+    let task = Process()
+    task.executableURL = URL(fileURLWithPath: "/usr/bin/defaults")
+    task.arguments = ["read", "com.apple.dock", "orientation"]
+    let pipe = Pipe()
+    task.standardOutput = pipe
+    task.standardError = Pipe()
+    do {
+        try task.run()
+        task.waitUntilExit()
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        let output = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines)
+        return output == "left"
+    } catch {
+        return false
+    }
+}
+
 // MARK: - Screen helpers
 
 func primaryScreen() -> NSScreen {
@@ -571,8 +589,14 @@ func toggleFillCenter() throws {
     var fillW = visible.width
     if isStageManagerEnabled() {
         let stageStripWidth: CGFloat = 90
-        fillX += stageStripWidth
-        fillW -= stageStripWidth
+        if isDockOnLeft() {
+            // Stage Manager strip is on the right when dock is on the left
+            fillW -= stageStripWidth
+        } else {
+            // Stage Manager strip is on the left (default)
+            fillX += stageStripWidth
+            fillW -= stageStripWidth
+        }
     }
 
     // Check if window is currently filling the (possibly adjusted) area
