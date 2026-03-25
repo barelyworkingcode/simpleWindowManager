@@ -4,12 +4,12 @@ A lightweight macOS command-line window manager for multi-display setups. Design
 
 ## Features
 
-- **Cycle windows on primary display** — Brings the bottom-most window to the front. Repeat to keep cycling through your window stack.
-- **Cycle windows on secondary display** — Same behavior for your secondary monitor.
+- **Cycle windows on primary display** — Brings the bottom-most window to the front. Repeat to keep cycling through your window stack. When Stage Manager is active, cycles through stages per-display instead.
+- **Cycle windows on secondary display** — Same behavior for your secondary monitor. Stage Manager-aware.
 - **Swap foremost windows** — Swaps the top window on each display to the other. Maintains relative positioning: full-screen windows stay full-screen on the target display, and windowed positions are scaled proportionally.
 - **Push to secondary** — Moves the foremost window on the primary display to the secondary, then raises the next window on primary.
 - **Pull to primary** — Moves the foremost window on the secondary display to the primary and raises it.
-- **Toggle fill/center** — Toggles the foremost window between filling the screen and a centered layout (60% width, 75% height).
+- **Toggle fill/center** — Toggles the foremost window between filling the screen and a centered layout (60% width, 75% height). When Stage Manager is active, the fill layout leaves space on the left for the stage strip.
 - **Hotkey cheat sheet** — Shows a floating overlay listing all Karabiner Hyper key shortcuts. Dismisses on any keypress.
 - **Microphone mute toggle** — Toggles the default input device (microphone) mute state.
 
@@ -223,6 +223,7 @@ Then add rules for each swm command. These go inside the `"rules"` array in your
 - When moving windows between displays with different resolutions, margins are preserved as proportions of the screen size — a full-screen window stays full-screen, a half-width window stays half-width.
 - Windows are moved to the destination screen before resizing, so apps can accept the full size of the new display.
 - Handles Electron/Chromium apps (Edge, Teams, VS Code) that have mismatched CG and AX window representations.
+- Detects Stage Manager via `defaults read com.apple.WindowManager GloballyEnabled` and adapts window cycling and fill behavior accordingly.
 
 ## License
 

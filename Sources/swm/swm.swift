@@ -22,8 +22,9 @@ struct CyclePrimary: ParsableCommand {
 
     func run() throws {
         try ensureAccessibility()
-        if NSScreen.screens.count == 1 && isStageManagerEnabled() {
-            try cycleStages()
+        if isStageManagerEnabled() {
+            let screen = NSScreen.screens.count > 1 ? primaryScreen() : nil
+            try cycleStages(on: screen)
         } else if NSScreen.screens.count == 1 {
             try cycleWindows(on: nil)
         } else {
@@ -44,7 +45,11 @@ struct CycleSecondary: ParsableCommand {
             print("No secondary display found.")
             throw ExitCode.failure
         }
-        try cycleWindows(on: screen)
+        if isStageManagerEnabled() {
+            try cycleStages(on: screen)
+        } else {
+            try cycleWindows(on: screen)
+        }
     }
 }
 
@@ -464,7 +469,8 @@ func cycleWindows(on screen: NSScreen?) throws {
 /// Cycle through Stage Manager stages using round-robin.
 /// Enumerates all regular apps with real windows, sorts them deterministically,
 /// finds the currently active app, and raises the next one in the list.
-func cycleStages() throws {
+/// When a screen is provided, only considers apps with windows on that display.
+func cycleStages(on screen: NSScreen? = nil) throws {
     // Find all regular apps that have at least one real window
     let allApps = NSWorkspace.shared.runningApplications
         .filter { $0.activationPolicy == .regular && !$0.isTerminated }
@@ -479,7 +485,12 @@ func cycleStages() throws {
 
         let hasRealWindow = axWindows.contains { axWin in
             guard let size = getWindowSize(axWin) else { return false }
-            return size.width >= 200 && size.height >= 200
+            guard size.width >= 200 && size.height >= 200 else { return false }
+            if let targetScreen = screen, let pos = getWindowPosition(axWin) {
+                let rect = CGRect(origin: pos, size: size)
+                return screenContaining(rect: rect) == targetScreen
+            }
+            return true
         }
         guard hasRealWindow else { continue }
 
@@ -514,7 +525,13 @@ func cycleStages() throws {
     }
 
     raiseWindow(mainWindow, pid: target.pid)
-    print("Raised '\(target.name)' to the top on stage display.")
+    let displayLabel: String
+    if let screen = screen {
+        displayLabel = screen == primaryScreen() ? "primary" : "secondary"
+    } else {
+        displayLabel = "single"
+    }
+    print("Raised '\(target.name)' to the top on \(displayLabel) display (stage).")
 }
 
 // MARK: - Toggle fill / center
@@ -549,11 +566,20 @@ func toggleFillCenter() throws {
     let visible = visibleFrameInCG(screen)
     let full = fullFrameInCG(screen)
 
-    // Check if window is currently filling the visible area (within tolerance)
+    // Compute fill rect, leaving space for Stage Manager strip if active
+    var fillX = visible.origin.x
+    var fillW = visible.width
+    if isStageManagerEnabled() {
+        let stageStripWidth: CGFloat = 90
+        fillX += stageStripWidth
+        fillW -= stageStripWidth
+    }
+
+    // Check if window is currently filling the (possibly adjusted) area
     let tolerance: CGFloat = 10
-    let isFilled = abs(winBounds.origin.x - visible.origin.x) <= tolerance
+    let isFilled = abs(winBounds.origin.x - fillX) <= tolerance
         && abs(winBounds.origin.y - visible.origin.y) <= tolerance
-        && abs(winBounds.width - visible.width) <= tolerance
+        && abs(winBounds.width - fillW) <= tolerance
         && abs(winBounds.height - visible.height) <= tolerance
 
     if isFilled {
@@ -566,9 +592,9 @@ func toggleFillCenter() throws {
         setWindowPosition(axWindow, position: CGPoint(x: centerX, y: centerY))
         print("Centered '\(appName)'.")
     } else {
-        // Switch to fill layout
-        setWindowPosition(axWindow, position: CGPoint(x: visible.origin.x, y: visible.origin.y))
-        setWindowSize(axWindow, size: CGSize(width: visible.width, height: visible.height))
+        // Switch to fill layout (Stage Manager-aware)
+        setWindowPosition(axWindow, position: CGPoint(x: fillX, y: visible.origin.y))
+        setWindowSize(axWindow, size: CGSize(width: fillW, height: visible.height))
         print("Filled '\(appName)'.")
     }
 }
